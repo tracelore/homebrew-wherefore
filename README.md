@@ -234,20 +234,91 @@ belongs to the official `homebrew/core` infrastructure
 (`ghcr.io/v2/homebrew/core/...`) -- confirmed by reproducing exactly
 that failure (a 404 against Homebrew's own registry) before this fix.
 
-**Not yet verified:** a real `brew install tracelore/wherefore/wherefore`
-from a clean/untapped state, against the now-complete formula with
-`root_url` set, actually pours the bottle instead of building from
-source. That's the next real test.
+**Update: this was confirmed working.** A real
+`brew install tracelore/wherefore/wherefore` from a clean state (no
+`--build-from-source`, no `--build-bottle`) successfully poured the
+bottle in seconds and ran a real comparison correctly. v0.1.0's bottle
+worked end to end.
 
+## v0.2.0: formula updated, bottle needs rebuilding
 
+`wherefore` 0.2.0 added real PostgreSQL connectivity (verified against
+a real Postgres server, see the main repo's `TAXONOMY_TODO.md`). The
+formula here has been updated to match:
 
-## Testing locally before pushing
+- `url`/`sha256` bumped to the real, live PyPI 0.2.0 sdist.
+- New dependency: `psycopg2-binary` (PostgreSQL driver). Confirmed by
+  direct testing this needed the SAME special-case treatment as
+  `polars-runtime-32`/`pyarrow` -- its sdist requires `libpq-dev`/
+  `pg_config` at build time despite the "-binary" name (which only
+  describes the published wheel, not the sdist Homebrew's resource
+  mechanism would otherwise try to build). Fetched by name+version
+  with `--only-binary`, same pattern as the other two.
+- **The old bottle block was removed, not left pointing at a stale
+  artifact.** 0.1.0's bottle is for 0.1.0's exact build -- it doesn't
+  cover the new dependency at all. A fresh `brew install --build-bottle`
+  + `brew bottle` needs to run against this updated formula before a
+  new `bottle do...end` block can be added back.
+
+**Status: built, installed, works correctly -- with one real, understood,
+accepted limitation, not the clean wheel-fetch success first predicted.**
+`psycopg2-binary`'s wheel-fetch fix worked for its actual purpose (no
+`pg_config`/`libpq-dev` build failure, confirmed by the install
+completing and `psycopg2` importing correctly inside the installed
+venv -- `2.9.12 (dt dec pq3 ext lo64)`, confirmed by direct testing,
+plus a real end-to-end `wherefore compare` run). But it surfaced a
+DIFFERENT, separate real issue: `psycopg2-binary`'s bundled
+`libkrb5support.1.1.dylib` (a transitive Kerberos dependency of
+`libpq`'s GSSAPI auth support, not dead weight -- confirmed by listing
+the wheel's full bundled dependency chain) has essentially zero spare
+header space reserved for its install-path load command (confirmed by
+measuring the actual Mach-O load command size with `otool -l`: 48
+bytes available, 46 used by the original path, Homebrew's real
+install path needs 106+ -- short by 60+ bytes, not a trim-a-few-
+characters gap). Homebrew's bottle-relocation step can't rewrite a
+load command into less space than the path needs, so it warns
+("Failed to fix install linkage") but does NOT fail the install --
+confirmed the formula still builds, links, and runs correctly despite
+the warning.
+
+**Real consequence, decided deliberately rather than chased further:**
+`brew bottle` for this version produces a bottle WITHOUT `cellar: :any`
+(confirmed: 0.1.0's bottle had it, 0.2.0's doesn't) -- meaning it only
+pours for users on Homebrew's standard default Cellar path
+(`/opt/homebrew` on Apple Silicon), not a customized one. Considered
+properly fixing this via `delocate-wheel` (the real tool for exactly
+this class of problem -- rewriting a Mach-O load command with more
+reserved space, then re-patching every other binary that references
+the old one) and decided against attempting it for now: the fix needs
+real macOS Mach-O tooling to verify (untestable from a sandbox), would
+need to cascade through several other bundled libraries in the same
+dependency chain, and would buy back portability for a Homebrew
+install-path customization almost nobody actually uses -- while the
+tool already works correctly for everyone on the standard, default
+install path today. Tracked as a known, deliberate limitation, not
+silently accepted without understanding it.
+
+## Rebuilding the bottle for a new version (the real sequence, proven once already)
 
 ```bash
-brew install --build-from-source ./Formula/wherefore.rb
-brew test wherefore
-brew audit --new-formula wherefore
+cp Formula/wherefore.rb $(brew --repo tracelore/wherefore)/Formula/wherefore.rb
+cd $(brew --repo tracelore/wherefore)
+brew uninstall wherefore 2>/dev/null  # ignore error if not installed
+brew install --build-bottle tracelore/wherefore/wherefore
+brew bottle tracelore/wherefore/wherefore
 ```
 
-If all three pass, push this repo to GitHub as
-`tracelore/homebrew-wherefore` and the tap is live.
+Take the bottle filename and the `bottle do...end` block the last
+command prints, add the block to `Formula/wherefore.rb` (with a
+`root_url` pointing at a new GitHub Release for the new version tag),
+upload the bottle file as that release's asset (renamed to the
+SINGLE-dash filename Homebrew's download logic actually expects --
+confirmed this naming mismatch is a real, recurring Homebrew quirk for
+custom taps, not a one-off), then:
+
+```bash
+brew uninstall wherefore
+brew install tracelore/wherefore/wherefore   # no source-build flags --
+                                               # should pour the new bottle
+```
+

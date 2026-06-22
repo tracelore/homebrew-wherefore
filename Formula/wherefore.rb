@@ -3,22 +3,31 @@ class Wherefore < Formula
 
   desc "Explains WHY two datasets differ, not just that they do"
   homepage "https://github.com/tracelore/wherefore"
-  url "https://files.pythonhosted.org/packages/fc/92/2249b18cfb2ca83831695ed79d364cab7724c190168dd0e5cd344e08b1a1/wherefore-0.1.0.tar.gz"
-  sha256 "86a3b93857508accc835704f8e79b55344c287cff1bcf234f05ca31572ce645a"
+  url "https://files.pythonhosted.org/packages/74/ee/983c2e6cf25f16611dca5c7bef80e34512e533bcd422cef57e83f77ab40f/wherefore-0.2.0.tar.gz"
+  sha256 "ee8872972361394aa63e8d118f9f8c62a03f49b28ac130439bf224abad85864d"
   license "Apache-2.0"
 
-  # Built once, successfully, on a real Mac (Apple Silicon, macOS
-  # 26.5, arm64_tahoe) after five real, distinct build issues were
-  # found and fixed (see install()'s comments and TAXONOMY_TODO-style
-  # notes in this tap's README for the full history). This bottle is
-  # what makes that one successful build pay off permanently: every
-  # future `brew install` on a matching platform downloads this
-  # prebuilt archive instead of repeating the ~3-minute from-source
-  # build (Rust, numpy/pandas C extensions, etc.) -- this is the
-  # entire point of bottling, not an optional nicety.
+  # Built and bottled on a real Mac (Apple Silicon, macOS, arm64_tahoe).
+  # NOTE the absence of `cellar: :any` here -- confirmed real, not an
+  # oversight: psycopg2-binary's bundled libkrb5support.1.1.dylib has
+  # essentially zero spare Mach-O header space for its install-path
+  # load command (confirmed by measuring with `otool -l`: 48 bytes
+  # available, the real Homebrew install path needs 106+), so
+  # Homebrew's bottle-relocation step can't rewrite it for an
+  # arbitrary Cellar location -- it warns but doesn't fail the build.
+  # Confirmed by direct testing the formula still installs, links,
+  # and runs correctly (including a real `import psycopg2` inside the
+  # installed venv and a real `wherefore compare` run) despite this --
+  # the practical effect is this bottle only pours for users on
+  # Homebrew's STANDARD DEFAULT Cellar path (`/opt/homebrew` on Apple
+  # Silicon), which is the overwhelming majority of users. See this
+  # tap's README for the full investigation and why a real fix
+  # (delocate-wheel rewriting the load command, then re-patching every
+  # other binary referencing it) was considered and deliberately
+  # deferred rather than attempted blind.
   bottle do
-    root_url "https://github.com/tracelore/homebrew-wherefore/releases/download/v0.1.0"
-    sha256 cellar: :any, arm64_tahoe: "75736ed6aa2ce468754d0b1e1c55bf4c75dcb2fce5c85bf124a4645124b465cb"
+    root_url "https://github.com/tracelore/homebrew-wherefore/releases/download/v0.2.0"
+    sha256 arm64_tahoe: "2f2917aab3a4ed8c1027e5c78ab95059ae006cd5115394c93b7720fc7724e525"
   end
 
   # Confirmed by directly inspecting every dependency's real sdist
@@ -188,17 +197,22 @@ class Wherefore < Formula
     sha256 "256d6731162371b77f3f29a55eacb8c0fc740ddb1a293a01d2ef5b5393c5c708"
   end
 
-  # NOTE: no "polars-runtime-32" or "pyarrow" resource block here,
-  # deliberately -- see install() below. Both are fetched directly by
-  # name+version from PyPI as prebuilt wheels rather than via
-  # Homebrew's resource mechanism, since the resource mechanism always
-  # forces a from-sdist build, which is exactly the problem being
-  # avoided for each (a pinned nightly Rust toolchain Homebrew's `rust`
-  # formula can't provide, and a missing separate C++ library,
-  # respectively -- see install()'s comments for the full detail on
-  # each). Keeping an unused sdist resource around (download +
-  # checksum-verify a tarball that's never actually installed) would
-  # be confusing dead weight, not real infrastructure.
+  # NOTE: no "polars-runtime-32", "pyarrow", or "psycopg2-binary"
+  # resource block here, deliberately -- see install() below. All
+  # three are fetched directly by name+version from PyPI as prebuilt
+  # wheels rather than via Homebrew's resource mechanism, since the
+  # resource mechanism always forces a from-sdist build, which is
+  # exactly the problem being avoided for each (a pinned nightly Rust
+  # toolchain Homebrew's `rust` formula can't provide; a missing
+  # separate C++ library; and psycopg2-binary's sdist needing
+  # libpq-dev/pg_config at build time despite its "-binary" name only
+  # describing the published WHEEL, not the sdist -- confirmed by
+  # direct testing that its setup.py is the identical compiled-C-
+  # extension build script plain psycopg2 uses -- see install()'s
+  # comments for the full detail on each). Keeping an unused sdist
+  # resource around (download + checksum-verify a tarball that's never
+  # actually installed) would be confusing dead weight, not real
+  # infrastructure.
 
   resource "pydantic" do
     url "https://files.pythonhosted.org/packages/18/a5/b60d21ac674192f8ab0ba4e9fd860690f9b4a6e51ca5df118733b487d8d6/pydantic-2.13.4.tar.gz"
@@ -347,22 +361,41 @@ class Wherefore < Formula
     # silently reproduce the exact same failure. Must instead ask pip
     # to resolve each package by NAME against the real package index,
     # the same place the prebuilt wheel actually lives.
+    # psycopg2-binary is a THIRD, separate case added for v0.2.0's
+    # PostgreSQL support: confirmed by direct testing that its sdist
+    # is NOT actually a prebuilt-binary install path at all -- the
+    # "-binary" name describes the published WHEEL only; its sdist's
+    # setup.py is the identical compiled-C-extension build script
+    # plain `psycopg2` uses, requiring libpq-dev/pg_config at build
+    # time. Since Homebrew's resource mechanism always forces
+    # --no-binary :all:, naively adding a "psycopg2-binary" resource
+    # would reproduce the exact pg_config-not-found failure plain
+    # psycopg2 has, defeating the entire reason -binary was chosen
+    # over source in the first place (see pyproject.toml's own
+    # extensive comment on that tradeoff). Fixed the same way as
+    # polars-runtime-32/pyarrow: fetched by name+version directly,
+    # bypassing the resource mechanism, with --only-binary so pip
+    # accepts the real prebuilt wheel instead of building from sdist.
     venv = virtualenv_create(libexec, "python3.13")
 
-    special_cased = ["polars-runtime-32", "pyarrow"]
+    special_cased = ["polars-runtime-32", "pyarrow", "psycopg2-binary"]
     other_resources = resources.reject { |r| special_cased.include?(r.name) }
     venv.pip_install other_resources
 
     # Versions pinned directly here (matching every other pin in this
     # formula) rather than read from a resource, since no
-    # "polars-runtime-32" or "pyarrow" resource exists -- see above for
-    # why both are fetched by name from PyPI instead.
+    # "polars-runtime-32", "pyarrow", or "psycopg2-binary" resource
+    # exists -- see above for why all three are fetched by name from
+    # PyPI instead.
     system libexec/"bin/python", "-m", "pip", "install",
            "--no-deps", "--ignore-installed", "--only-binary=polars-runtime-32",
            "polars-runtime-32==1.41.2"
     system libexec/"bin/python", "-m", "pip", "install",
            "--no-deps", "--ignore-installed", "--only-binary=pyarrow",
            "pyarrow==24.0.0"
+    system libexec/"bin/python", "-m", "pip", "install",
+           "--no-deps", "--ignore-installed", "--only-binary=psycopg2-binary",
+           "psycopg2-binary==2.9.12"
 
     venv.pip_install_and_link buildpath
   end
