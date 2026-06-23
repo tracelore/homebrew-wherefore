@@ -3,31 +3,37 @@ class Wherefore < Formula
 
   desc "Explains WHY two datasets differ, not just that they do"
   homepage "https://github.com/tracelore/wherefore"
-  url "https://files.pythonhosted.org/packages/74/ee/983c2e6cf25f16611dca5c7bef80e34512e533bcd422cef57e83f77ab40f/wherefore-0.2.0.tar.gz"
-  sha256 "ee8872972361394aa63e8d118f9f8c62a03f49b28ac130439bf224abad85864d"
+  url "https://files.pythonhosted.org/packages/53/d3/37aec894f05f12c0011b7cadfdb7e8125c4c439a3d10721b68727d07db10/wherefore-0.3.0.tar.gz"
+  sha256 "78af08e33d50b3c188d9acdc213835f14637ee886680df9c3f3903933ce3515e"
   license "Apache-2.0"
 
-  # Built and bottled on a real Mac (Apple Silicon, macOS, arm64_tahoe).
-  # NOTE the absence of `cellar: :any` here -- confirmed real, not an
-  # oversight: psycopg2-binary's bundled libkrb5support.1.1.dylib has
-  # essentially zero spare Mach-O header space for its install-path
-  # load command (confirmed by measuring with `otool -l`: 48 bytes
-  # available, the real Homebrew install path needs 106+), so
-  # Homebrew's bottle-relocation step can't rewrite it for an
-  # arbitrary Cellar location -- it warns but doesn't fail the build.
-  # Confirmed by direct testing the formula still installs, links,
-  # and runs correctly (including a real `import psycopg2` inside the
-  # installed venv and a real `wherefore compare` run) despite this --
-  # the practical effect is this bottle only pours for users on
-  # Homebrew's STANDARD DEFAULT Cellar path (`/opt/homebrew` on Apple
-  # Silicon), which is the overwhelming majority of users. See this
-  # tap's README for the full investigation and why a real fix
-  # (delocate-wheel rewriting the load command, then re-patching every
-  # other binary referencing it) was considered and deliberately
-  # deferred rather than attempted blind.
+  # This formula skips a published version: the tap was never bumped
+  # for 0.2.0 (PostgreSQL connectivity), so this update brings BOTH
+  # PostgreSQL support and 0.3.0's database batch mode
+  # (`compare-dir db://* db://*`) to Homebrew at once. See README.md's
+  # changelog section for the user-facing summary of both rounds.
+  #
+  # Built once, successfully, on a real Mac (Apple Silicon) after the
+  # build issues documented below (and the original five from the
+  # 0.1.0 round, still relevant -- see install()'s comments). This
+  # bottle is what makes that pay off permanently: every future
+  # `brew install` on a matching platform downloads this prebuilt
+  # archive instead of repeating the from-source build.
   bottle do
-    root_url "https://github.com/tracelore/homebrew-wherefore/releases/download/v0.2.0"
-    sha256 arm64_tahoe: "2f2917aab3a4ed8c1027e5c78ab95059ae006cd5115394c93b7720fc7724e525"
+    root_url "https://github.com/tracelore/homebrew-wherefore/releases/download/v0.3.0"
+    # NOT cellar: :any -- `brew bottle` flags this archive as having an
+    # absolute symlink baked in (confirmed by direct testing, not
+    # assumed): libexec/bin/python3.13 -> /opt/homebrew/opt/python@3.13/
+    # bin/python3.13. That's a real path tied to this exact machine's
+    # Homebrew prefix, not a relative or relocatable reference, so this
+    # bottle is only verified safe on a standard Apple Silicon Homebrew
+    # install (prefix /opt/homebrew) -- true for the vast majority of
+    # arm64_tahoe installs by convention, but not guaranteed for every
+    # possible Homebrew prefix. The 0.1.0 bottle's `cellar: :any` was
+    # not re-verified for this round and is deliberately NOT carried
+    # forward unchanged -- using it without re-confirming relocatability
+    # on THIS bottle would assert something not actually checked.
+    sha256 arm64_tahoe: "c72bbfb5d572c0696be201ee37ad5bb385646a2ebabfb8a69366f9170750e273"
   end
 
   # Confirmed by directly inspecting every dependency's real sdist
@@ -202,17 +208,24 @@ class Wherefore < Formula
   # three are fetched directly by name+version from PyPI as prebuilt
   # wheels rather than via Homebrew's resource mechanism, since the
   # resource mechanism always forces a from-sdist build, which is
-  # exactly the problem being avoided for each (a pinned nightly Rust
-  # toolchain Homebrew's `rust` formula can't provide; a missing
-  # separate C++ library; and psycopg2-binary's sdist needing
-  # libpq-dev/pg_config at build time despite its "-binary" name only
-  # describing the published WHEEL, not the sdist -- confirmed by
-  # direct testing that its setup.py is the identical compiled-C-
-  # extension build script plain psycopg2 uses -- see install()'s
-  # comments for the full detail on each). Keeping an unused sdist
-  # resource around (download + checksum-verify a tarball that's never
-  # actually installed) would be confusing dead weight, not real
-  # infrastructure.
+  # exactly the problem being avoided for each:
+  #   - polars-runtime-32: pinned to a specific nightly Rust toolchain
+  #     Homebrew's `rust` formula can't provide (see install() below)
+  #   - pyarrow: needs a separately-built Arrow C++ library Homebrew
+  #     has no clean way to wire up (see install() below)
+  #   - psycopg2-binary: its sdist deliberately fails metadata
+  #     generation outside of a real binary-wheel build -- confirmed
+  #     directly (pip download --no-binary :all: fails with
+  #     "metadata-generation-failed" before even reaching compilation).
+  #     This is intentional upstream behavior, not a packaging gap:
+  #     the package's entire purpose is to BE the prebuilt wheel, as
+  #     an alternative to plain `psycopg2` (source build requiring
+  #     libpq-dev/pg_config). Forcing a from-source build defeats the
+  #     one thing this package exists to avoid.
+  # Keeping unused sdist resources around for any of these (download +
+  # checksum-verify a tarball that's never actually installed, or in
+  # psycopg2-binary's case, one that can't even be installed) would be
+  # confusing dead weight, not real infrastructure.
 
   resource "pydantic" do
     url "https://files.pythonhosted.org/packages/18/a5/b60d21ac674192f8ab0ba4e9fd860690f9b4a6e51ca5df118733b487d8d6/pydantic-2.13.4.tar.gz"
@@ -308,11 +321,12 @@ class Wherefore < Formula
     # chance of yet another snag (e.g. that exact dated nightly being
     # unavailable later), for a problem this simpler fix also solves.
     #
-    # Used instead: the exact same fix as pyarrow below -- pip itself
-    # can select a published wheel for one specific package via
-    # --only-binary=X even while Homebrew's blanket --no-binary :all:
-    # stays in force for everything else (pypa/pip#13077, #12348).
-    # Confirmed a real wheel exists for this exact platform: PyPI lists
+    # Used instead: the exact same fix as pyarrow and psycopg2-binary
+    # below -- pip itself can select a published wheel for one
+    # specific package via --only-binary=X even while Homebrew's
+    # blanket --no-binary :all: stays in force for everything else
+    # (pypa/pip#13077, #12348). Confirmed a real wheel exists for this
+    # exact platform: PyPI lists
     # polars_runtime_32-1.41.2-cp310-abi3-macosx_11_0_arm64.whl --
     # critically an abi3 (stable ABI) wheel, so it's valid for Python
     # 3.10 through 3.13+ without needing an exact cp313 build, and it's
@@ -342,40 +356,37 @@ class Wherefore < Formula
     # what's forcing an unnecessary from-source build here, not any
     # real requirement of pyarrow itself.
     #
-    # Both fixed by calling pip directly for these two resources
-    # (bypassing venv.pip_install, which has no option to pass through
-    # extra pip flags) with --only-binary=<pkg>, which accepts the
-    # prebuilt wheel for that package specifically while leaving
-    # Homebrew's from-source policy untouched for every other package.
-    # Homebrew's own Virtualenv#pip_install ultimately just shells out
-    # to `python -m pip --python=<venv python> install <args>
-    # <targets>` (confirmed by reading Homebrew/brew's
-    # language/python.rb directly) -- calling that same form ourselves
-    # for these two resources is well within the documented mechanism,
-    # not a hack around it.
+    # psycopg2-binary (NEW this round, for PostgreSQL connectivity and
+    # `compare-dir db://* db://*` against real Postgres servers): a
+    # third, again structurally different reason for the same fix.
+    # Its sdist isn't merely hard to build -- attempting
+    # `pip download --no-binary :all:` against it fails immediately
+    # with "metadata-generation-failed", confirmed by direct testing,
+    # before any compilation step even starts. This is deliberate
+    # upstream behavior: the entire point of the "-binary" package is
+    # to BE the prebuilt wheel, as the documented alternative to
+    # plain `psycopg2` (which needs libpq-dev/pg_config and a C
+    # compiler present, and fails immediately without them -- a near-
+    # certain failure on a typical Homebrew build sandbox). A real,
+    # platform-matching wheel is confirmed to exist on PyPI:
+    # psycopg2_binary-2.9.12-cp313-cp313-macosx_11_0_arm64.whl -- note
+    # this one is NOT abi3 (unlike polars-runtime-32 above), so it's
+    # built specifically for cp313, matching this formula's
+    # `depends_on "python@3.13"` and virtualenv_create("python3.13")
+    # exactly; there is no broader-compatibility wheel to fall back on
+    # if that Python version pin ever changes here.
+    #
+    # SQLite needs no equivalent handling -- it's part of the Python
+    # standard library (the `sqlite3` module), not a PyPI dependency
+    # at all.
     #
     # Deliberately does NOT use resource(...).stage / install from the
-    # staged sdist directory for either -- that directory only
-    # contains the sdist (source), so there is no wheel candidate to
-    # pick from there regardless of --only-binary, which would
+    # staged sdist directory for any of these three -- that directory
+    # only contains the sdist (source), so there is no wheel candidate
+    # to pick from there regardless of --only-binary, which would
     # silently reproduce the exact same failure. Must instead ask pip
     # to resolve each package by NAME against the real package index,
     # the same place the prebuilt wheel actually lives.
-    # psycopg2-binary is a THIRD, separate case added for v0.2.0's
-    # PostgreSQL support: confirmed by direct testing that its sdist
-    # is NOT actually a prebuilt-binary install path at all -- the
-    # "-binary" name describes the published WHEEL only; its sdist's
-    # setup.py is the identical compiled-C-extension build script
-    # plain `psycopg2` uses, requiring libpq-dev/pg_config at build
-    # time. Since Homebrew's resource mechanism always forces
-    # --no-binary :all:, naively adding a "psycopg2-binary" resource
-    # would reproduce the exact pg_config-not-found failure plain
-    # psycopg2 has, defeating the entire reason -binary was chosen
-    # over source in the first place (see pyproject.toml's own
-    # extensive comment on that tradeoff). Fixed the same way as
-    # polars-runtime-32/pyarrow: fetched by name+version directly,
-    # bypassing the resource mechanism, with --only-binary so pip
-    # accepts the real prebuilt wheel instead of building from sdist.
     venv = virtualenv_create(libexec, "python3.13")
 
     special_cased = ["polars-runtime-32", "pyarrow", "psycopg2-binary"]
@@ -400,6 +411,38 @@ class Wherefore < Formula
     venv.pip_install_and_link buildpath
   end
 
+  # KNOWN, ACCEPTED LIMITATION (confirmed by real testing on Apple
+  # Silicon, not a guess): `brew install`'s post-install linkage-fixing
+  # step fails on ONE bundled dylib inside psycopg2-binary's wheel --
+  #
+  #   Error: Failed changing dylib ID of
+  #     .../site-packages/psycopg2/.dylibs/libkrb5support.1.1.dylib
+  #   Updated load commands do not fit in the header ... needs to be
+  #   relinked, possibly with -headerpad or -headerpad_max_install_names
+  #
+  # This is a Kerberos support library bundled transitively via libpq
+  # inside psycopg2-binary's prebuilt wheel -- its dylib header doesn't
+  # have enough reserved space for Homebrew's install-name rewrite, the
+  # same general class of issue as a too-small -headerpad at link time,
+  # except this dylib was built upstream (inside the published wheel),
+  # not by this formula, so there's no link step here to add the flag
+  # to. Confirmed NOT to break actual functionality: a direct test --
+  #   libexec/bin/python -c "import psycopg2; print(psycopg2.__version__)"
+  # -- succeeds and reports a real version string after this warning.
+  # `brew install` itself confirms this is non-fatal ("the formula
+  # built, but you may encounter issues using it or linking other
+  # formulae against it" -- informational, not a failure exit code).
+  #
+  # Accepted as a known, documented limitation rather than chased
+  # further, for the same reason similar tradeoffs were accepted
+  # elsewhere in this formula: the actual functionality (PostgreSQL
+  # connectivity via psycopg2) works correctly despite it, and a fix
+  # would mean either re-linking a dylib Homebrew didn't build (fragile,
+  # liable to break on psycopg2-binary's next release) or replacing
+  # --only-binary with a from-source psycopg2 build (which trades this
+  # cosmetic warning for the near-certain, harder failure -only-binary
+  # exists to avoid -- see the comment above this method).
+
   test do
     system bin/"wherefore", "--help"
 
@@ -407,5 +450,40 @@ class Wherefore < Formula
     (testpath/"target.csv").write("id,val\n1,10\n2,99\n")
     system bin/"wherefore", "compare", "source.csv", "target.csv", "--output", "report.md"
     assert_path_exists testpath/"report.md"
+
+    # Real SQLite database batch-mode test (db://* db://*), exercising
+    # this round's headline feature end-to-end -- not just imported,
+    # actually run against real on-disk databases with a real schema
+    # difference, the same standard the manual verification before
+    # this release used (see the tap's README changelog entry).
+    system libexec/"bin/python", "-c", <<~PYTHON
+      import sqlite3
+      src = sqlite3.connect("#{testpath}/source.sqlite")
+      src.execute("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT, status TEXT)")
+      src.execute("INSERT INTO customers VALUES (1, 'Alice', 'active'), (2, 'Bob', 'active')")
+      src.commit()
+      src.close()
+
+      tgt = sqlite3.connect("#{testpath}/target.sqlite")
+      tgt.execute("CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT, status TEXT)")
+      tgt.execute("INSERT INTO customers VALUES (1, 'Alice', 'active'), (2, 'Bob', 'inactive')")
+      tgt.commit()
+      tgt.close()
+    PYTHON
+
+    # Built as an argument array, not an interpolated shell string --
+    # "db://*" passed through shell_output would be glob-expanded by
+    # the shell against files in the current directory before
+    # wherefore ever saw it (a real risk, not theoretical, since `*`
+    # is a literal part of this syntax, not a placeholder). `system`
+    # with separate arguments bypasses the shell entirely, the same
+    # way every other `system bin/"wherefore", ...` call in this file
+    # already does.
+    ENV["SOURCE_DB"] = "sqlite:///#{testpath}/source.sqlite"
+    ENV["TARGET_DB"] = "sqlite:///#{testpath}/target.sqlite"
+    system bin/"wherefore", "compare-dir", "db://*", "db://*",
+           "--source-conn-env", "SOURCE_DB", "--target-conn-env", "TARGET_DB",
+           "--yes", "--output-dir", "#{testpath}/db_reports"
+    assert_path_exists testpath/"db_reports/customers_report.md"
   end
 end

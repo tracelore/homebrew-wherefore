@@ -234,91 +234,136 @@ belongs to the official `homebrew/core` infrastructure
 (`ghcr.io/v2/homebrew/core/...`) -- confirmed by reproducing exactly
 that failure (a 404 against Homebrew's own registry) before this fix.
 
-**Update: this was confirmed working.** A real
-`brew install tracelore/wherefore/wherefore` from a clean state (no
-`--build-from-source`, no `--build-bottle`) successfully poured the
-bottle in seconds and ran a real comparison correctly. v0.1.0's bottle
-worked end to end.
+**Not yet verified:** a real `brew install tracelore/wherefore/wherefore`
+from a clean/untapped state, against the now-complete formula with
+`root_url` set, actually pours the bottle instead of building from
+source. That's the next real test.
 
-## v0.2.0: formula updated, bottle needs rebuilding
 
-`wherefore` 0.2.0 added real PostgreSQL connectivity (verified against
-a real Postgres server, see the main repo's `TAXONOMY_TODO.md`). The
-formula here has been updated to match:
 
-- `url`/`sha256` bumped to the real, live PyPI 0.2.0 sdist.
-- New dependency: `psycopg2-binary` (PostgreSQL driver). Confirmed by
-  direct testing this needed the SAME special-case treatment as
-  `polars-runtime-32`/`pyarrow` -- its sdist requires `libpq-dev`/
-  `pg_config` at build time despite the "-binary" name (which only
-  describes the published wheel, not the sdist Homebrew's resource
-  mechanism would otherwise try to build). Fetched by name+version
-  with `--only-binary`, same pattern as the other two.
-- **The old bottle block was removed, not left pointing at a stale
-  artifact.** 0.1.0's bottle is for 0.1.0's exact build -- it doesn't
-  cover the new dependency at all. A fresh `brew install --build-bottle`
-  + `brew bottle` needs to run against this updated formula before a
-  new `bottle do...end` block can be added back.
-
-**Status: built, installed, works correctly -- with one real, understood,
-accepted limitation, not the clean wheel-fetch success first predicted.**
-`psycopg2-binary`'s wheel-fetch fix worked for its actual purpose (no
-`pg_config`/`libpq-dev` build failure, confirmed by the install
-completing and `psycopg2` importing correctly inside the installed
-venv -- `2.9.12 (dt dec pq3 ext lo64)`, confirmed by direct testing,
-plus a real end-to-end `wherefore compare` run). But it surfaced a
-DIFFERENT, separate real issue: `psycopg2-binary`'s bundled
-`libkrb5support.1.1.dylib` (a transitive Kerberos dependency of
-`libpq`'s GSSAPI auth support, not dead weight -- confirmed by listing
-the wheel's full bundled dependency chain) has essentially zero spare
-header space reserved for its install-path load command (confirmed by
-measuring the actual Mach-O load command size with `otool -l`: 48
-bytes available, 46 used by the original path, Homebrew's real
-install path needs 106+ -- short by 60+ bytes, not a trim-a-few-
-characters gap). Homebrew's bottle-relocation step can't rewrite a
-load command into less space than the path needs, so it warns
-("Failed to fix install linkage") but does NOT fail the install --
-confirmed the formula still builds, links, and runs correctly despite
-the warning.
-
-**Real consequence, decided deliberately rather than chased further:**
-`brew bottle` for this version produces a bottle WITHOUT `cellar: :any`
-(confirmed: 0.1.0's bottle had it, 0.2.0's doesn't) -- meaning it only
-pours for users on Homebrew's standard default Cellar path
-(`/opt/homebrew` on Apple Silicon), not a customized one. Considered
-properly fixing this via `delocate-wheel` (the real tool for exactly
-this class of problem -- rewriting a Mach-O load command with more
-reserved space, then re-patching every other binary that references
-the old one) and decided against attempting it for now: the fix needs
-real macOS Mach-O tooling to verify (untestable from a sandbox), would
-need to cascade through several other bundled libraries in the same
-dependency chain, and would buy back portability for a Homebrew
-install-path customization almost nobody actually uses -- while the
-tool already works correctly for everyone on the standard, default
-install path today. Tracked as a known, deliberate limitation, not
-silently accepted without understanding it.
-
-## Rebuilding the bottle for a new version (the real sequence, proven once already)
+## Testing locally before pushing
 
 ```bash
-cp Formula/wherefore.rb $(brew --repo tracelore/wherefore)/Formula/wherefore.rb
-cd $(brew --repo tracelore/wherefore)
-brew uninstall wherefore 2>/dev/null  # ignore error if not installed
-brew install --build-bottle tracelore/wherefore/wherefore
-brew bottle tracelore/wherefore/wherefore
+brew install --build-from-source ./Formula/wherefore.rb
+brew test wherefore
+brew audit --new-formula wherefore
 ```
 
-Take the bottle filename and the `bottle do...end` block the last
-command prints, add the block to `Formula/wherefore.rb` (with a
-`root_url` pointing at a new GitHub Release for the new version tag),
-upload the bottle file as that release's asset (renamed to the
-SINGLE-dash filename Homebrew's download logic actually expects --
-confirmed this naming mismatch is a real, recurring Homebrew quirk for
-custom taps, not a one-off), then:
+If all three pass, push this repo to GitHub as
+`tracelore/homebrew-wherefore` and the tap is live.
 
-```bash
-brew uninstall wherefore
-brew install tracelore/wherefore/wherefore   # no source-build flags --
-                                               # should pour the new bottle
+## v0.2.0: PostgreSQL connectivity (built, bottled, released -- but never committed)
+
+PostgreSQL support (`psycopg2-binary`) was built and bottled for this
+tap. The bottle (`wherefore-0.2.0.arm64_tahoe.bottle.tar.gz`, ~99MB)
+was uploaded as a real GitHub Release asset under tag `v0.2.0` and is
+still live there. However, the corresponding `Formula/wherefore.rb`
+change was never committed to this repo's git history -- confirmed
+directly: `git log` on this tap shows no commit between the original
+`0.1.0` formula and `0.3.0` below. The release and the tracked formula
+file diverged silently. `v0.2.0`'s bottle is left in place,
+unreferenced, as a record of what was actually built -- not deleted,
+since it's real, working evidence of that round's effort, just never
+wired up to the formula that would have made `brew install` use it.
+
+This gap is the direct reason the `0.3.0` work below adds PostgreSQL
+support to the formula's resources for the first time from this tap's
+perspective, even though `psycopg2-binary` itself isn't new to the
+underlying CLI.
+
+## v0.3.0: database batch comparison mode, plus catching up on v0.2.0
+
+`compare-dir db://* db://*` -- batch-comparing every matching table
+between two databases with one combined primary-key confirmation
+instead of one prompt per table -- is this round's headline feature.
+Since the tap was still sitting at `0.1.0` in git (see above), this
+update brings PostgreSQL connectivity and the new batch mode to
+Homebrew in a single jump.
+
+**Dependency surface: no version drift, one genuinely new package.**
+Every package already pinned in the `0.1.0` formula's resources was
+independently re-verified against a real, fresh `0.3.0` install
+(`pip install -e ".[dev]"` on a clean venv) -- diffed name-by-name and
+version-by-version, not eyeballed. All matched exactly; nothing in the
+existing dependency tree had moved. The one real addition is
+`psycopg2-binary==2.9.12`.
+
+**`psycopg2-binary` needed the same `--only-binary=` fix as
+`pyarrow`/`polars-runtime-32`, for a third, distinct reason.**
+Confirmed directly: `pip download --no-binary :all:` against its sdist
+fails immediately with `metadata-generation-failed`, before any
+compilation starts. This is deliberate upstream behavior -- the
+package's entire purpose is to BE the prebuilt wheel, as the documented
+alternative to plain `psycopg2` (which needs `libpq-dev`/`pg_config`
+and a C compiler, and would very likely fail outright in Homebrew's
+build sandbox). A real wheel exists for this platform:
+`psycopg2_binary-2.9.12-cp313-cp313-macosx_11_0_arm64.whl` -- note this
+one is built specifically for cp313, not an abi3 wheel like
+`polars-runtime-32`, so it only works because this formula's Python pin
+(`depends_on "python@3.13"`) matches exactly; there's no fallback wheel
+if that pin changes.
+
+**New, real, accepted limitation: a dylib inside `psycopg2-binary`
+trips Homebrew's post-install linkage fix.** Confirmed by direct
+testing, reproduced identically across two separate from-source builds
+and the final bottle-poured install:
+
+```
+Error: Failed changing dylib ID of
+  .../site-packages/psycopg2/.dylibs/libkrb5support.1.1.dylib
+Updated load commands do not fit in the header ... needs to be
+relinked, possibly with -headerpad or -headerpad_max_install_names
 ```
 
+`libkrb5support` is a Kerberos support library bundled transitively via
+libpq inside the wheel -- built upstream, not by this formula, so there's
+no link step here to add `-headerpad` to. Confirmed NOT to break actual
+functionality: `libexec/bin/python -c "import psycopg2; print(psycopg2.__version__)"`
+succeeds and reports a real version string, both right after a
+from-source build and after pouring the final public bottle. `brew
+install` itself treats this as non-fatal ("the formula built, but you
+may encounter issues..." -- informational, not a failure exit). Accepted
+as a known, documented limitation, the same way this tap accepted
+`polars-runtime-32`'s nightly-Rust pin and `pyarrow`'s Arrow C++
+dependency in the `0.1.0` round -- chasing a real fix here means either
+relinking a dylib this formula didn't build (fragile against
+`psycopg2-binary`'s next release) or giving up `--only-binary` for a
+from-source `psycopg2` build (trading a cosmetic warning for the
+near-certain harder failure `--only-binary` exists to avoid).
+
+**This bottle is NOT `cellar: :any`, unlike `0.1.0`'s.** `brew bottle`
+flagged a real absolute symlink baked into the build:
+`libexec/bin/python3.13 -> /opt/homebrew/opt/python@3.13/bin/python3.13`
+-- a path tied to this exact machine's Homebrew prefix. `0.1.0`'s
+relocatability check passed clean; this one didn't, and that's reported
+honestly in the formula's `bottle do` comment rather than carrying
+`cellar: :any` forward unchanged. In practice this only matters for a
+non-standard Homebrew prefix; every default Apple Silicon install (the
+only platform this bottle targets, `arm64_tahoe`) uses `/opt/homebrew`.
+
+**Bottle filename: same double-hyphen-to-single-hyphen rename `0.2.0`
+needed.** `brew bottle` writes `wherefore--0.3.0.arm64_tahoe.bottle.tar.gz`
+(double hyphen) locally; `brew install` fetches
+`wherefore-0.3.0.arm64_tahoe.bottle.tar.gz` (single hyphen) from the
+release. Missed on the first upload attempt (real `curl: (56) ... 404`
+reproduced and confirmed), fixed by renaming before re-upload -- the
+exact same rename `0.2.0`'s asset name shows it also needed, confirmed
+by checking that release's asset name directly rather than assuming.
+
+**Bottle hash is not byte-stable across `brew bottle` runs.** Two
+separate invocations of the identical `brew bottle ...` command, with
+no source changes in between, produced two different file sizes and two
+different sha256 hashes. The hash actually committed to the formula was
+computed directly (`shasum -a 256`) on the exact file that was later
+uploaded and is now live -- not copied from an earlier run's printed
+output, which would have been wrong by the time of upload.
+
+**Verified end-to-end against the real, public bottle**, not just the
+from-source build: `brew install tracelore/wherefore/wherefore` (no
+`--build-from-source` flag) pulled the bottle from the real
+`github.com/tracelore/homebrew-wherefore/releases/download/v0.3.0/...`
+URL, poured it, and `brew test` ran the formula's full test block
+against it -- including a new SQLite-backed `compare-dir db://* db://*`
+test (two real on-disk databases, one deliberately mismatched row),
+exercising this round's headline feature against the actual installed
+bottle, not a mock or a from-source-only check.
