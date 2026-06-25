@@ -3,8 +3,8 @@ class Wherefore < Formula
 
   desc "Explains WHY two datasets differ, not just that they do"
   homepage "https://github.com/tracelore/wherefore"
-  url "https://files.pythonhosted.org/packages/53/d3/37aec894f05f12c0011b7cadfdb7e8125c4c439a3d10721b68727d07db10/wherefore-0.3.0.tar.gz"
-  sha256 "78af08e33d50b3c188d9acdc213835f14637ee886680df9c3f3903933ce3515e"
+  url "https://files.pythonhosted.org/packages/1a/6c/8f2326b10283a0703c28f489e1700ada6e81cc2953ed74e905f9613b8dc3/wherefore-0.3.1.tar.gz"
+  sha256 "db83824058a9d9c9127cf22d8427f860571a1551824cf15b6429c0e01f9eb590"
   license "Apache-2.0"
 
   # This formula skips a published version: the tap was never bumped
@@ -13,28 +13,27 @@ class Wherefore < Formula
   # (`compare-dir db://* db://*`) to Homebrew at once. See README.md's
   # changelog section for the user-facing summary of both rounds.
   #
+  # v0.3.1: fixes a real pandas 3.0.3 segfault (pd.to_datetime on a
+  # plain non-date string column -- not a Python exception, a real
+  # SIGSEGV) and a real --fuzzy-keys correctness bug (could merge two
+  # unrelated records whose keys differ only in separator/case). The
+  # pandas resource below is downgraded to 2.3.3 to match
+  # wherefore 0.3.1's own pandas>=2.2,<3.0 constraint -- see
+  # CHANGELOG.md in the main repo for the full account of both fixes.
+  #
   # Built once, successfully, on a real Mac (Apple Silicon) after the
   # build issues documented below (and the original five from the
   # 0.1.0 round, still relevant -- see install()'s comments). This
   # bottle is what makes that pay off permanently: every future
   # `brew install` on a matching platform downloads this prebuilt
   # archive instead of repeating the from-source build.
-  bottle do
-    root_url "https://github.com/tracelore/homebrew-wherefore/releases/download/v0.3.0"
-    # NOT cellar: :any -- `brew bottle` flags this archive as having an
-    # absolute symlink baked in (confirmed by direct testing, not
-    # assumed): libexec/bin/python3.13 -> /opt/homebrew/opt/python@3.13/
-    # bin/python3.13. That's a real path tied to this exact machine's
-    # Homebrew prefix, not a relative or relocatable reference, so this
-    # bottle is only verified safe on a standard Apple Silicon Homebrew
-    # install (prefix /opt/homebrew) -- true for the vast majority of
-    # arm64_tahoe installs by convention, but not guaranteed for every
-    # possible Homebrew prefix. The 0.1.0 bottle's `cellar: :any` was
-    # not re-verified for this round and is deliberately NOT carried
-    # forward unchanged -- using it without re-confirming relocatability
-    # on THIS bottle would assert something not actually checked.
-    sha256 arm64_tahoe: "c72bbfb5d572c0696be201ee37ad5bb385646a2ebabfb8a69366f9170750e273"
-  end
+  # The old bottle block was removed, not left pointing at a stale
+  # artifact. The previous bottle was built against pandas 3.0.3 (the
+  # broken, segfaulting version) -- it would pour a binary that
+  # contains exactly the bug v0.3.1 exists to fix. A fresh
+  # `brew install --build-bottle` + `brew bottle` needs to run against
+  # this updated formula before a new `bottle do...end` block can be
+  # added back.
 
   # Confirmed by directly inspecting every dependency's real sdist
   # pyproject.toml (not guessed): TWO of the resources below require
@@ -194,8 +193,14 @@ class Wherefore < Formula
   end
 
   resource "pandas" do
-    url "https://files.pythonhosted.org/packages/f8/87/4341c6252d1c47b08768c3d25ac487362bf403f0313ddae4a2a26c9b1b4c/pandas-3.0.3.tar.gz"
-    sha256 "696a4a00a2a2a35d4e5deb3fc946641b96c944f02230e4f76137fe35d806c4fc"
+    url "https://files.pythonhosted.org/packages/33/01/d40b85317f86cf08d853a4f495195c73815fdf205eef3993821720274518/pandas-2.3.3.tar.gz"
+    sha256 "e05e1af93b977f7eafa636d043f9f94c7ee3ac81af99c13508215942e64c993b"
+    # Downgraded from 3.0.3 in v0.3.1: confirmed by direct testing that
+    # pandas 3.0.3 segfaults inside pd.to_datetime(..., errors="coerce",
+    # format="ISO8601") on a plain non-date string column -- exactly
+    # what loaders.py calls on every load. wherefore 0.3.1 itself pins
+    # pandas>=2.2,<3.0 for this reason; this resource must match that
+    # constraint, not just the top-level sdist version.
   end
 
   resource "polars" do
