@@ -192,17 +192,6 @@ class Wherefore < Formula
     sha256 "694a8e44c87657c59292ede72891eb91d34131f6531463aab3009191c77364a8"
   end
 
-  resource "pandas" do
-    url "https://files.pythonhosted.org/packages/33/01/d40b85317f86cf08d853a4f495195c73815fdf205eef3993821720274518/pandas-2.3.3.tar.gz"
-    sha256 "e05e1af93b977f7eafa636d043f9f94c7ee3ac81af99c13508215942e64c993b"
-    # Downgraded from 3.0.3 in v0.3.1: confirmed by direct testing that
-    # pandas 3.0.3 segfaults inside pd.to_datetime(..., errors="coerce",
-    # format="ISO8601") on a plain non-date string column -- exactly
-    # what loaders.py calls on every load. wherefore 0.3.1 itself pins
-    # pandas>=2.2,<3.0 for this reason; this resource must match that
-    # constraint, not just the top-level sdist version.
-  end
-
   resource "polars" do
     url "https://files.pythonhosted.org/packages/ff/f9/aeda46259b0669247a160315d2d51269de9504b9dd2f70acadbcb22f46b7/polars-1.41.2.tar.gz"
     sha256 "256d6731162371b77f3f29a55eacb8c0fc740ddb1a293a01d2ef5b5393c5c708"
@@ -416,7 +405,7 @@ class Wherefore < Formula
     # the same place the prebuilt wheel actually lives.
     venv = virtualenv_create(libexec, "python3.13")
 
-    special_cased = ["polars-runtime-32", "pyarrow", "psycopg2-binary"]
+    special_cased = ["polars-runtime-32", "pyarrow", "psycopg2-binary", "pandas"]
     other_resources = resources.reject { |r| special_cased.include?(r.name) }
     venv.pip_install other_resources
 
@@ -434,6 +423,9 @@ class Wherefore < Formula
     system libexec/"bin/python", "-m", "pip", "install",
            "--no-deps", "--ignore-installed", "--only-binary=psycopg2-binary",
            "psycopg2-binary==2.9.12"
+    system libexec/"bin/python", "-m", "pip", "install",
+           "--no-deps", "--ignore-installed", "--only-binary=pandas",
+           "pandas==2.3.3"
 
     venv.pip_install_and_link buildpath
   end
