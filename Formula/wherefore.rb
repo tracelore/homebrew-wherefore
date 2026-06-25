@@ -208,6 +208,28 @@ class Wherefore < Formula
     sha256 "256d6731162371b77f3f29a55eacb8c0fc740ddb1a293a01d2ef5b5393c5c708"
   end
 
+  # pandas's own real, required runtime dependencies (confirmed
+  # directly: pip show pandas -- "Requires: numpy, python-dateutil,
+  # pytz, tzdata"). numpy and python-dateutil already have resources
+  # above; pytz and tzdata did not, since they were previously pulled
+  # in transitively when pandas was installed via the normal resource
+  # mechanism. pandas is now fetched with --no-deps (see install()
+  # below, special-cased for an unrelated meson build issue) --
+  # --no-deps means pandas's own dependencies are no longer resolved
+  # automatically, so these two need to be real, explicit resources
+  # now, or wherefore fails to import pandas at all (confirmed
+  # directly: "ImportError: Unable to import required dependencies:
+  # pytz: No module named pytz").
+  resource "pytz" do
+    url "https://files.pythonhosted.org/packages/ff/46/dd499ec9038423421951e4fad73051febaa13d2df82b4064f87af8b8c0c3/pytz-2026.2.tar.gz"
+    sha256 "0e60b47b29f21574376f218fe21abc009894a2321ea16c6754f3cad6eb7cdd6a"
+  end
+
+  resource "tzdata" do
+    url "https://files.pythonhosted.org/packages/ba/19/1b9b0e29f30c6d35cb345486df41110984ea67ae69dddbc0e8a100999493/tzdata-2026.2.tar.gz"
+    sha256 "9173fde7d80d9018e02a662e168e5a2d04f87c41ea174b139fbef642eda62d10"
+  end
+
   # NOTE: no "polars-runtime-32", "pyarrow", or "psycopg2-binary"
   # resource block here, deliberately -- see install() below. All
   # three are fetched directly by name+version from PyPI as prebuilt
