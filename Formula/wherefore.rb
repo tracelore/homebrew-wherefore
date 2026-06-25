@@ -27,13 +27,18 @@ class Wherefore < Formula
   # bottle is what makes that pay off permanently: every future
   # `brew install` on a matching platform downloads this prebuilt
   # archive instead of repeating the from-source build.
-  # The old bottle block was removed, not left pointing at a stale
-  # artifact. The previous bottle was built against pandas 3.0.3 (the
-  # broken, segfaulting version) -- it would pour a binary that
-  # contains exactly the bug v0.3.1 exists to fix. A fresh
-  # `brew install --build-bottle` + `brew bottle` needs to run against
-  # this updated formula before a new `bottle do...end` block can be
-  # added back.
+  bottle do
+    root_url "https://github.com/tracelore/homebrew-wherefore/releases/download/v0.3.1"
+    # NOT cellar: :any -- same reasoning as 0.3.0's bottle (this
+    # archive bundles an absolute libexec/bin/python3.13 symlink tied
+    # to the standard /opt/homebrew prefix, not re-verified as
+    # relocatable for this build). Confirmed by real, direct testing
+    # this round: a full uninstall + brew install --build-bottle +
+    # brew test cycle against this exact bottle, including the same
+    # compare-dir db://* db://* SQLite test that segfaulted before
+    # the pandas fix -- now completes cleanly end to end.
+    sha256 arm64_tahoe: "227ece3eaf24ad12ac81290084c1fcf202f8b6622948555f5d3afbd1aa5c0c3c"
+  end
 
   # Confirmed by directly inspecting every dependency's real sdist
   # pyproject.toml (not guessed): TWO of the resources below require
